@@ -34,7 +34,7 @@ def get_opts():
     parser.add_argument("--model", type=str, default="sat-nerf", choices=['nerf', 's-nerf', 'sat-nerf'],
                         help="which NeRF to use")
     parser.add_argument("--gpu_id", type=int, required=True,
-                        help="GPU that will be used")
+                        help="Number of GPUs that will be used")
 
     # training and network configuration
     parser.add_argument('--lr', type=float, default=5e-4,
@@ -45,6 +45,8 @@ def get_opts():
                         help='downscale factor for the input images')
     parser.add_argument('--max_train_steps', type=int, default=300000,
                         help='number of training iterations')
+    parser.add_argument('--max_epochs', type=int, default=10,
+                        help='number of training epochs')
     parser.add_argument('--save_every_n_epochs', type=int, default=4,
                         help="save checkpoints and debug files every n epochs")
     parser.add_argument('--fc_units', type=int, default=512,
