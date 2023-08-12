@@ -26,4 +26,4 @@ python3 main.py --root_dir $PROJECT_DIR/datasets/root_dir/crops_rpcs_raw/JAX_068
                 --max_epochs $EPOCHS \
                 --batch_size $BATCH_SIZE \
                 --chunk $CHUNK \
-                --fc_units 256
+                --fc_units 256 2>> $EXP_DIR/$EXP_NAME/errors.txt
