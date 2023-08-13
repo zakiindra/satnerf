@@ -23,7 +23,7 @@ def main():
     trainer = pl.Trainer(max_epochs=args.max_epochs,
                          logger=logger,
                          callbacks=[ckpt_callback],
-                         devices=[0],
+                         devices=args.gpu_id,
                          # deterministic=True, # RuntimeError: cumsum_cuda_kernel does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True)'.
                          benchmark=True,
                          # weights_summary=None,  # pass a ModelSummary callback with max_depth instead
