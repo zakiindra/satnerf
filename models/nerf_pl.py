@@ -2,7 +2,8 @@
 import torch
 import pytorch_lightning as pl
 
-from datasets import load_dataset
+from datasets import load_train_dataset, load_val_dataset
+from datasets.satellite_dataset import init_scaling_params, generate_train_cache
 from metrics import load_loss, DepthLoss, SNerfLoss
 from torch.utils.data import DataLoader
 from collections import defaultdict
@@ -80,12 +81,12 @@ class NeRF_pl(pl.LightningModule):
 
     def setup(self, stage: str) -> None:
         if stage == "fit":
-            self.train_dataset = [] + load_dataset(self.args, split="train")
-            self.val_dataset = [] + load_dataset(self.args, split="val")
+            self.train_dataset = [] + load_train_dataset(self.args)
+            self.val_dataset = [] + load_val_dataset(self.args)
 
-    # def prepare_data(self) -> None:
-    #     self.train_dataset = [] + load_dataset(self.args, split="train")
-    #     self.val_dataset = [] + load_dataset(self.args, split="val")
+    def prepare_data(self) -> None:
+        init_scaling_params(self.args.root_dir, float(self.args.img_downscale))
+        generate_train_cache(self.args.root_dir, self.args.cache_dir, float(self.args.img_downscale))
 
     def configure_optimizers(self):
         parameters = train_utils.get_parameters(self.models)
@@ -174,7 +175,6 @@ class NeRF_pl(pl.LightningModule):
         }
 
     def validation_step(self, batch, batch_nb):
-
         rays, rgbs = batch["rays"], batch["rgbs"]
         rays = rays.squeeze()  # (H*W, 3)
         rgbs = rgbs.squeeze()  # (H*W, 3)
@@ -216,42 +216,34 @@ class NeRF_pl(pl.LightningModule):
 
         psnr_ = metrics.psnr(results[f"rgb_{typ}"], rgbs)
         ssim_ = metrics.ssim(results[f"rgb_{typ}"].view(1, 3, H, W), rgbs.view(1, 3, H, W))
-        mae_ = 0.0
 
-        if self.args.data != 'sat':
-            self.log("val/loss", loss)
-            self.log("val/psnr", psnr_)
-            self.log("val/ssim", ssim_)
-        else:
-            # 1st image is from the training set, so it must not contribute to the validation metrics
-            if batch_nb != 0:
-                # compute MAE
-                try:
-                    aoi_id = batch["src_id"][0][:7]
-                    gt_roi_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.txt")
-                    gt_dsm_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.tif")
-                    assert os.path.exists(gt_roi_path), f"{gt_roi_path} not found"
-                    assert os.path.exists(gt_dsm_path), f"{gt_dsm_path} not found"
-                    depth = results[f"depth_{typ}"]
-                    unique_identifier = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                    out_path = os.path.join(self.val_im_dir, "dsm/tmp_pred_dsm_{}.tif".format(unique_identifier))
-                    _ = self.val_dataset[0].get_dsm_from_nerf_prediction(rays.cpu(), depth.cpu(), dsm_path=out_path)
-                    mae_ = compute_mae_and_save_dsm_diff(out_path,
-                                                         batch["src_id"][0],
-                                                         self.args.gt_dir,
-                                                         self.val_im_dir,
-                                                         0,
-                                                         save=False)
-                    os.remove(out_path)
-                except:
-                    mae_ = np.nan
+        # compute MAE
+        try:
+            aoi_id = batch["src_id"][0][:7]
+            gt_roi_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.txt")
+            gt_dsm_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.tif")
+            assert os.path.exists(gt_roi_path), f"{gt_roi_path} not found"
+            assert os.path.exists(gt_dsm_path), f"{gt_dsm_path} not found"
+            depth = results[f"depth_{typ}"]
+            unique_identifier = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            out_path = os.path.join(self.val_im_dir, "dsm/tmp_pred_dsm_{}.tif".format(unique_identifier))
+            _ = self.val_dataset[0].get_dsm_from_nerf_prediction(rays.cpu(), depth.cpu(), dsm_path=out_path)
+            mae_ = compute_mae_and_save_dsm_diff(out_path,
+                                                 batch["src_id"][0],
+                                                 self.args.gt_dir,
+                                                 self.val_im_dir,
+                                                 0,
+                                                 save=False)
+            os.remove(out_path)
+        except:
+            mae_ = np.nan
 
-                self.log("val/loss", loss)
-                self.log("val/psnr", psnr_)
-                self.log("val/ssim", ssim_)
-                self.log("val/mae", mae_)
-                for k in loss_dict.keys():
-                    self.log("val/{}".format(k), loss_dict[k])
+        self.log("val/loss", loss)
+        self.log("val/psnr", psnr_)
+        self.log("val/ssim", ssim_)
+        self.log("val/mae", mae_)
+        for k in loss_dict.keys():
+            self.log("val/{}".format(k), loss_dict[k])
 
         return {
             "loss": loss,
