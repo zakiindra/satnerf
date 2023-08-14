@@ -391,10 +391,6 @@ class ValidationSatelliteDataset(Dataset):
         self.center = torch.tensor([float(d["X_offset"]), float(d["Y_offset"]), float(d["Z_offset"])])
         self.range = torch.max(torch.tensor([float(d["X_scale"]), float(d["Y_scale"]), float(d["Z_scale"])]))
 
-        # load dataset split
-        self.load_val_split()
-
-    def load_val_split(self):
         with open(os.path.join(self.json_dir, "test.txt"), "r") as f:
             json_files = f.read().split("\n")
         self.json_files = [os.path.join(self.json_dir, json_p) for json_p in json_files]
@@ -422,15 +418,7 @@ class ValidationSatelliteDataset(Dataset):
             # read json, image path and id
             metadata = sat_utils.read_dict_from_json(json_p)
             img_p = os.path.join(self.img_dir, metadata["img"])
-            img_id = sat_utils.get_file_id(metadata["img"])
-
-            # # get rays from cache
-            # # if cache not exist, create rays and save to cache
-            # cache_path = "{}/{}.data".format(self.cache_dir, img_id)
-            # if os.path.exists(cache_path):
-            #     rays = torch.load(cache_path)
-            # else:
-            #     rays = generate_rays_from_metadata(metadata, self.img_downscale)
+            # img_id = sat_utils.get_file_id(metadata["img"])
 
             rays = generate_rays_from_metadata(metadata, self.img_downscale)
             rays = self.normalize_rays(rays)
@@ -445,7 +433,7 @@ class ValidationSatelliteDataset(Dataset):
             all_rgbs += [rgbs]
             all_rays += [rays]
             all_sun_dirs += [sun_dirs]
-            print("Image {} loaded ( {} / {} )".format(img_id, t + 1, len(json_files)))
+            # print("Image {} loaded ( {} / {} )".format(img_id, t + 1, len(json_files)))
 
         all_ids = torch.cat(all_ids, 0)
         all_rays = torch.cat(all_rays, 0)  # (len(json_files)*h*w, 8)
@@ -588,7 +576,6 @@ class ValidationSatelliteDataset(Dataset):
         # take a batch from the dataset
         rays, rgbs, _ = self.load_data([self.json_files[idx]])
         ts = self.all_ids[idx] * torch.ones(rays.shape[0], 1)
-        print("ts.shape", ts.shape)
 
         metadata = sat_utils.read_dict_from_json(self.json_files[idx])
         img_id = sat_utils.get_file_id(metadata["img"])
