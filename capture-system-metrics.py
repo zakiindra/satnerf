@@ -13,12 +13,14 @@ def capture_gpu_metrics():
     lines = result.stdout.decode("UTF-8").replace("|", "").replace("/", "").split("\n")
     for line in lines[:3]:
         val = line.split()
-        metrics.append("{},{},{}".format(
-            val[3].replace("W", ""),
-            val[5].replace("MiB", ""),
-            val[7].replace("%", ""))
-        )
-    return ",".join(metrics)
+        # metrics.append("{},{},{}".format(
+        #     val[3].replace("W", ""),
+        #     val[5].replace("MiB", ""),
+        #     val[7].replace("%", ""))
+        # )
+        metrics.extend([val[3].replace("W", ""), val[5].replace("MiB", ""), val[7].replace("%", "")])
+    # return ",".join(metrics)
+    return metrics
 
 
 def get_process_ids():
@@ -47,16 +49,25 @@ def capture_cpu_metrics():
     return ",".join(metrics)
 
 
+counter = 0
 while True:
     filename = sys.argv[1]
     sleep_duration = sys.argv[2]
     try:
+        if counter == 20:
+            break
         gpu_metrics = capture_gpu_metrics()
         cpu_metrics = capture_cpu_metrics()
+
+        if gpu_metrics[2] == gpu_metrics[4] == gpu_metrics[8] == "0":
+            counter += 1
+        else:
+            counter = 0
+
         with open(filename, "a") as f:
-            f.write("{},{}\n".format(gpu_metrics, cpu_metrics))
+            f.write("{},{}\n".format(",".join(gpu_metrics), cpu_metrics))
         time.sleep(float(sleep_duration))
     except Exception as e:
         with open(filename, "a") as f:
-            f.write(e)
+            f.write(str(e))
         break
