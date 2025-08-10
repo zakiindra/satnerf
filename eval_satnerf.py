@@ -1,5 +1,4 @@
 import torch
-import yaml
 import os
 import json
 import train_utils
@@ -21,7 +20,7 @@ warnings.filterwarnings("ignore")
 #os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
 
 def extract_model_state_dict(ckpt_path, model_name='model', prefixes_to_ignore=[]):
-    checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'), weights_only=False)
     checkpoint_ = {}
     if 'state_dict' in checkpoint: # if it's a pytorch-lightning checkpoint
         checkpoint = checkpoint['state_dict']
@@ -163,34 +162,14 @@ def find_best_embbeding_for_val_image(models, rays, conf, gt_rgbs, train_indices
 
     return best_ts
 
-def find_best_embeddings_for_val_dataset(val_dataset, models, conf, train_indices):
-    print("finding best embedding indices for validation dataset...")
-    list_of_image_indices = [0]
-    for i in np.arange(1, len(val_dataset)):
-        sample = val_dataset[i]
-        rays, rgbs = sample["rays"].cuda(), sample["rgbs"]
-        rays = rays.squeeze()  # (H*W, 3)
-        rgbs = rgbs.squeeze()  # (H*W, 3)
-        src_id = sample["src_id"]
-        aoi_id = src_id[:7]
-        if aoi_id in ["JAX_068", "JAX_004", "JAX_214"]:
-            t = predefined_val_ts(src_id)
-        else:
-            ts = find_best_embbeding_for_val_image(models, rays, conf, rgbs, train_indices=train_indices)
-            t = torch.unique(ts).cpu().numpy()
-        print("{}: {}".format(src_id, t))
-        list_of_image_indices.append(t)
-    print("... done!")
-    return list_of_image_indices
 
 def predefined_val_ts(img_id):
 
     aoi_id = img_id[:7]
-
     if aoi_id == "JAX_068":
         d = {"JAX_068_013_RGB": 0,
              "JAX_068_002_RGB": 8,
-             "JAX_068_012_RGB": 1} #3
+             "JAX_068_012_RGB": 1}  # 3
     elif aoi_id == "JAX_004":
         d = {"JAX_004_022_RGB": 0,
              "JAX_004_014_RGB": 0,
@@ -204,8 +183,100 @@ def predefined_val_ts(img_id):
         d = {"JAX_260_015_RGB": 0,
              "JAX_260_006_RGB": 3,
              "JAX_260_004_RGB": 10}
+    # elif aoi_id == "JAX_260":
+    #     d = {"JAX_260_008_RGB": 0,
+    #          "JAX_260_016_RGB": 3,
+    #          "JAX_260_011_RGB": 10}
+    elif aoi_id == "JAX_412":
+        d = {
+            "JAX_412_016_RGB": 0,
+            "JAX_412_022_RGB": 8,
+            "JAX_412_002_RGB": 18,
+            "JAX_412_011_RGB": 2
+        }
+    elif aoi_id == "JAX_033":
+        d = {
+            "JAX_033_011_RGB": 0,
+            "JAX_033_006_RGB": 3,
+            "JAX_033_004_RGB": 10
+        }
+    elif aoi_id == "JAX_070":
+        d = {
+            "JAX_070_019_RGB": 0,
+            "JAX_070_018_RGB": 3,
+            "JAX_070_020_RGB": 10
+        }
+    elif aoi_id == "JAX_072":
+        d = {
+            "JAX_072_005_RGB": 0,
+            "JAX_072_009_RGB": 3,
+            "JAX_072_019_RGB": 10
+        }
+    elif aoi_id == "JAX_474":
+        d = {
+            "JAX_474_004_RGB": 0,
+            "JAX_474_006_RGB": 8,
+            "JAX_474_025_RGB": 18,
+            "JAX_474_015_RGB": 2
+        }
+    elif aoi_id == "JAX_427":
+        d = {
+            "JAX_427_022_RGB": 0,
+            "JAX_427_006_RGB": 8,
+            "JAX_427_012_RGB": 18,
+            "JAX_427_026_RGB": 2
+        }
+    elif aoi_id == "JAX_467":
+        d = {
+            "JAX_467_013_RGB": 0,
+            "JAX_467_026_RGB": 8,
+            "JAX_467_015_RGB": 18,
+            "JAX_467_019_RGB": 2
+        }
+    elif aoi_id == "JAX_416":
+        d = {
+            "JAX_416_021_RGB": 0,
+            "JAX_416_026_RGB": 8,
+            "JAX_416_002_RGB": 18,
+            "JAX_416_010_RGB": 2
+        }
+    elif aoi_id == "JAX_280":
+        d = {
+            "JAX_280_020_RGB": 0,
+            "JAX_280_013_RGB": 8,
+            "JAX_280_002_RGB": 18,
+            "JAX_280_021_RGB": 2
+        }
+    elif aoi_id == "JAX_022":
+        d = {
+            "JAX_022_006_RGB": 0,
+            "JAX_022_001_RGB": 3,
+            "JAX_022_002_RGB": 10
+        }
+    elif aoi_id == "JAX_028":
+        d = {
+            "JAX_028_015_RGB": 0,
+            "JAX_028_004_RGB": 3,
+            "JAX_028_011_RGB": 10
+        }
+    elif aoi_id == "OMA_042":
+        d = {
+            "OMA_042_043_RGB": 3,
+            "OMA_042_041_RGB": 3,
+            "OMA_042_014_RGB": 3,
+            "OMA_042_024_RGB": 3,
+            "OMA_042_029_RGB": 3,
+            "OMA_042_028_RGB": 3,
+        }
+    elif aoi_id == "OMA_559":
+        d = {
+            "OMA_559_022_RGB": 3,
+            "OMA_559_023_RGB": 3,
+            "OMA_559_020_RGB": 3,
+            "OMA_559_005_RGB": 3,
+        }
     else:
-        return None
+        return 3
     return d[img_id]
 
 
@@ -289,7 +360,111 @@ def predefined_val_ts(img_id):
 #         psnr.append(psnr_)
 #         ssim_ = metrics.ssim(results[f"rgb_{typ}"].view(1, 3, H, W).cpu(), rgbs.view(1, 3, H, W).cpu())
 #         ssim.append(ssim_)
+## def eval_aoi(run_id, logs_dir, output_dir, epoch_number, split, checkpoints_dir=None, root_dir=None, img_dir=None, gt_dir=None):
 #
+#     print(logs_dir)
+#     with open('{}/opts.json'.format(os.path.join(logs_dir, run_id)), 'r') as f:
+#         args = argparse.Namespace(**json.load(f))
+#
+#     #args.root_dir = "/mnt/cdisk/roger/Datasets" + args.root_dir.split("Datasets")[-1]
+#     #args.img_dir = "/mnt/cdisk/roger/Datasets" + args.img_dir.split("Datasets")[-1]
+#     #args.cache_dir = "/mnt/cdisk/roger/Datasets" + args.cache_dir.split("Datasets")[-1]
+#     #args.gt_dir = "/mnt/cdisk/roger/Datasets" + args.gt_dir.split("Datasets")[-1]
+#
+#     if gt_dir is not None:
+#         assert os.path.isdir(gt_dir)
+#         args.gt_dir = gt_dir
+#     if img_dir is not None:
+#         assert os.path.isdir(img_dir)
+#         args.img_dir = img_dir
+#     if root_dir is not None:
+#         assert os.path.isdir(root_dir)
+#         args.root_dir = root_dir
+#     if not os.path.isdir(args.cache_dir):
+#         args.cache_dir = None
+#
+#     # load pretrained nerf
+#     if checkpoints_dir is None:
+#         checkpoints_dir = args.ckpts_dir
+#     models = load_nerf(run_id, logs_dir, checkpoints_dir, epoch_number-1)
+#
+#     # prepare dataset
+#     dataset = SatelliteDataset(args.root_dir, args.img_dir, split="val",
+#                                img_downscale=args.img_downscale, cache_dir=args.cache_dir)
+#     if split == "train":
+#         with open(os.path.join(args.root_dir, "train.txt"), "r") as f:
+#             json_files = f.read().split("\n")
+#         dataset.json_files = [os.path.join(args.root_dir, json_p) for json_p in json_files]
+#         dataset.all_ids = [i for i, p in enumerate(dataset.json_files)]
+#         samples_to_eval = np.arange(0, len(dataset))
+#     else:
+#         samples_to_eval = np.arange(1, len(dataset))
+#
+#     psnr, ssim, mae = [], [], []
+#
+#     for i in samples_to_eval:
+#
+#         sample = dataset[i]
+#         rays, rgbs = sample["rays"].cuda(), sample["rgbs"]
+#         rays = rays.squeeze()  # (H*W, 3)
+#         rgbs = rgbs.squeeze()  # (H*W, 3)
+#         src_id  = sample["src_id"]
+#         if "h" in sample and "w" in sample:
+#             W, H = sample["w"], sample["h"]
+#         else:
+#             W = H = int(torch.sqrt(torch.tensor(rays.shape[0]).float()))
+#
+#         ts = None
+#         if args.model == "sat-nerf":
+#             if split == "val":
+#                 t = predefined_val_ts(src_id)
+#                 ts = t * torch.ones(rays.shape[0], 1).long().cuda().squeeze()
+#             else:
+#                 ts = sample["ts"].cuda().squeeze()
+#
+#         results = batched_inference(models, rays, ts, args)
+#
+#         for k in sample.keys():
+#             if torch.is_tensor(sample[k]):
+#                 sample[k] = sample[k].unsqueeze(0)
+#             else:
+#                 sample[k] = [sample[k]]
+#         out_dir = os.path.join(output_dir, run_id, split)
+#         os.makedirs(out_dir, exist_ok=True)
+#         save_nerf_output_to_images(dataset, sample, results, out_dir, epoch_number)
+#
+#         # image metrics
+#         typ = "fine" if "rgb_fine" in results else "coarse"
+#         psnr_ = metrics.psnr(results[f"rgb_{typ}"].cpu(), rgbs.cpu())
+#         psnr.append(psnr_)
+#         ssim_ = metrics.ssim(results[f"rgb_{typ}"].view(1, 3, H, W).cpu(), rgbs.view(1, 3, H, W).cpu())
+#         ssim.append(ssim_)
+#
+#         # geometry metrics
+#         pred_dsm_path = "{}/dsm/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
+#         mae_ = sat_utils.compute_mae_and_save_dsm_diff(pred_dsm_path, src_id, args.gt_dir, out_dir, epoch_number)
+#         mae.append(mae_)
+#         print("{}: pnsr {:.3f} / ssim {:.3f} / mae {:.3f}".format(src_id, psnr_, ssim_, mae_))
+#
+#         # clean files
+#         in_tmp_path = glob.glob(os.path.join(out_dir, "*rdsm_epoch*.tif"))[0]
+#         out_tmp_path = in_tmp_path.replace(out_dir, os.path.join(out_dir, "rdsm"))
+#         os.makedirs(os.path.dirname(out_tmp_path), exist_ok=True)
+#         shutil.copyfile(in_tmp_path, out_tmp_path)
+#         os.remove(in_tmp_path)
+#         in_tmp_path = glob.glob(os.path.join(out_dir, "*rdsm_diff_epoch*.tif"))[0]
+#         out_tmp_path = in_tmp_path.replace(out_dir, os.path.join(out_dir, "rdsm_diff"))
+#         os.makedirs(os.path.dirname(out_tmp_path), exist_ok=True)
+#         shutil.copyfile(in_tmp_path, out_tmp_path)
+#         os.remove(in_tmp_path)
+#
+#     print("\nMean PSNR: {:.3f}".format(np.mean(np.array(psnr))))
+#     print("Mean SSIM: {:.3f}".format(np.mean(np.array(ssim))))
+#     print("Mean MAE: {:.3f}\n".format(np.mean(np.array(mae))))
+#
+# if __name__ == '__main__':
+#     import fire
+#     fire.Fire(eval_aoi)
 #         # geometry metrics
 #         pred_dsm_path = "{}/dsm/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
 #         mae_ = sat_utils.compute_mae_and_save_dsm_diff(pred_dsm_path, src_id, args.gt_dir, out_dir, epoch_number)

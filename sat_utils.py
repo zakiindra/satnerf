@@ -94,6 +94,24 @@ def ecef_to_latlon_custom(x, y, z):
     lat = lat * 180 / np.pi
     return lat, lon, alt
 
+# def utm_from_latlon(lats, lons):
+#     """
+#     convert lat-lon to utm
+#     """
+#     import pyproj
+#     import utm
+#     from pyproj import Transformer
+#
+#     n = utm.latlon_to_zone_number(lats[0], lons[0])
+#     l = utm.latitude_to_zone_letter(lats[0])
+#     proj_src = pyproj.Proj("+proj=latlong")
+#     proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
+#     transformer = Transformer.from_proj(proj_src, proj_dst)
+#     easts, norths = transformer.transform(lons, lats)
+#     #easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
+#     return easts, norths
+
+
 def utm_from_latlon(lats, lons):
     """
     convert lat-lon to utm
@@ -102,13 +120,24 @@ def utm_from_latlon(lats, lons):
     import utm
     from pyproj import Transformer
 
+    # Get UTM zone number and letter
     n = utm.latlon_to_zone_number(lats[0], lons[0])
     l = utm.latitude_to_zone_letter(lats[0])
-    proj_src = pyproj.Proj("+proj=latlong")
-    proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
-    transformer = Transformer.from_proj(proj_src, proj_dst)
+
+    # Method 1: Using EPSG codes (recommended)
+    # Determine hemisphere based on zone letter
+    # Zone letters C-M are in southern hemisphere, N-X are in northern hemisphere
+    is_northern = l >= 'N'
+
+    # Calculate EPSG code: 32600 + zone_number for northern, 32700 + zone_number for southern
+    if is_northern:
+        utm_epsg = 32600 + n
+    else:
+        utm_epsg = 32700 + n
+
+    # Create transformer from WGS84 (EPSG:4326) to UTM
+    transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{utm_epsg}", always_xy=True)
     easts, norths = transformer.transform(lons, lats)
-    #easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
     return easts, norths
 
 def dsm_pointwise_diff(in_dsm_path, gt_dsm_path, dsm_metadata, gt_mask_path=None, out_rdsm_path=None, out_err_path=None):
@@ -159,23 +188,24 @@ def dsm_pointwise_diff(in_dsm_path, gt_dsm_path, dsm_metadata, gt_mask_path=None
         pred_dsm = f.read()[0, :, :]
 
     # register and compute mae
-    # fix_xy = False
-    # try:
-    #     import dsmr
-    # except:
-    #     print("Warning: dsmr not found ! DSM registration will only use the Z dimension")
-    #     fix_xy = True
+    fix_xy = False
+    try:
+        import dsmr
+    except:
+        print("Warning: dsmr not found ! DSM registration will only use the Z dimension")
+        fix_xy = True
 
-    # if fix_xy:
-    #     pred_rdsm = pred_dsm + np.nanmean((gt_dsm - pred_dsm).ravel())
-    #     with rasterio.open(pred_rdsm_path, 'w', **profile) as dst:
-    #         dst.write(pred_rdsm, 1)
-    # else:
-    import dsmr
-    transform = dsmr.compute_shift(gt_dsm_path, pred_dsm_path, scaling=False)
-    dsmr.apply_shift(pred_dsm_path, pred_rdsm_path, *transform)
-    with rasterio.open(pred_rdsm_path, "r") as f:
-        pred_rdsm = f.read()[0, :, :]
+    if fix_xy:
+        pred_rdsm = pred_dsm + np.nanmean((gt_dsm - pred_dsm).ravel())
+        with rasterio.open(pred_rdsm_path, 'w', **profile) as dst:
+            dst.write(pred_rdsm, 1)
+    else:
+        import dsmr
+        transform = dsmr.compute_shift(gt_dsm_path, pred_dsm_path, scaling=False)
+        dsmr.apply_shift(pred_dsm_path, pred_rdsm_path, *transform)
+        with rasterio.open(pred_rdsm_path, "r") as f:
+            pred_rdsm = f.read()[0, :, :]
+
     err = pred_rdsm - gt_dsm
 
     # remove tmp files and write output tifs if desired
@@ -210,8 +240,6 @@ def compute_mae_and_save_dsm_diff(pred_dsm_path, src_id, gt_dir, out_dir, epoch_
     assert os.path.exists(gt_dsm_path), f"{gt_dsm_path} not found"
     assert os.path.exists(gt_seg_path), f"{gt_seg_path} not found"
 
-    from sat_utils import dsm_pointwise_diff
-
     gt_roi_metadata = np.loadtxt(gt_roi_path)
     rdsm_diff_path = os.path.join(out_dir, "{}_rdsm_diff_epoch{}.tif".format(src_id, epoch_number))
     rdsm_path = os.path.join(out_dir, "{}_rdsm_epoch{}.tif".format(src_id, epoch_number))
@@ -229,10 +257,6 @@ def compute_mae_and_save_dsm_diff(pred_dsm_path, src_id, gt_dir, out_dir, epoch_
 
     return np.nanmean(abs(diff.ravel()))
 
-
-def dsm_mae(in_dsm_path, gt_dsm_path, dsm_metadata, gt_mask_path=None):
-    abs_err = dsm_pointwise_abs_errors(in_dsm_path, gt_dsm_path, dsm_metadata, gt_mask_path=gt_mask_path)
-    return np.nanmean(abs_err.ravel())
 
 def sort_by_increasing_view_incidence_angle(root_dir):
     incidence_angles = []

@@ -21,6 +21,11 @@ def inference(model, args, rays_xyz, z_vals, rays_d=None, sun_d=None, rays_t=Non
     N_samples = rays_xyz.shape[1]
     xyz_ = rays_xyz.view(-1, 3)  # (N_rays*N_samples, 3)
 
+    if isinstance(N_samples, torch.Tensor):
+        N_samples = N_samples.item()
+    if isinstance(N_rays, torch.Tensor):
+        N_rays = N_rays.item()
+
     # check if there are additional inputs, which are used or not depending on the nerf variant
     rays_d_ = None if rays_d is None else torch.repeat_interleave(rays_d, repeats=N_samples, dim=0)
     sun_d_ = None if sun_d is None else torch.repeat_interleave(sun_d, repeats=N_samples, dim=0)
@@ -30,14 +35,18 @@ def inference(model, args, rays_xyz, z_vals, rays_d=None, sun_d=None, rays_t=Non
     chunk = args.chunk
     batch_size = xyz_.shape[0]
 
-    # run model
-    out_chunks = []
-    for i in range(0, batch_size, chunk):
-        out_chunks += [model(xyz_[i:i+chunk],
-                             input_dir=None if rays_d_ is None else rays_d_[i:i + chunk],
-                             input_sun_dir=None if sun_d_ is None else sun_d_[i:i + chunk],
-                             input_t=None if rays_t_ is None else rays_t_[i:i + chunk])]
-    out = torch.cat(out_chunks, 0)
+    # run model, actual model forward
+    # out_chunks = []
+    # for i in range(0, batch_size, chunk):
+    #     out_chunks += [model(xyz_[i:i+chunk],
+    #                          input_dir=None if rays_d_ is None else rays_d_[i:i + chunk],
+    #                          input_sun_dir=None if sun_d_ is None else sun_d_[i:i + chunk],
+    #                          input_t=None if rays_t_ is None else rays_t_[i:i + chunk])]
+    # out = torch.cat(out_chunks, 0)
+    out = model(xyz_,
+                input_dir=None if rays_d_ is None else rays_d_,
+                input_sun_dir=None if sun_d_ is None else sun_d_,
+                input_t=None if rays_t_ is None else rays_t_)
 
     # retreive outputs
     out_channels = model.number_of_outputs

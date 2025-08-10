@@ -19,8 +19,7 @@ from sat_utils import compute_mae_and_save_dsm_diff
 
 from eval_satnerf import save_nerf_output_to_images, predefined_val_ts
 
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 torch.set_float32_matmul_precision('medium')
 torch.cuda.empty_cache()
@@ -218,25 +217,22 @@ class NeRF_pl(pl.LightningModule):
         ssim_ = metrics.ssim(results[f"rgb_{typ}"].view(1, 3, H, W), rgbs.view(1, 3, H, W))
 
         # compute MAE
-        try:
-            aoi_id = batch["src_id"][0][:7]
-            gt_roi_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.txt")
-            gt_dsm_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.tif")
-            assert os.path.exists(gt_roi_path), f"{gt_roi_path} not found"
-            assert os.path.exists(gt_dsm_path), f"{gt_dsm_path} not found"
-            depth = results[f"depth_{typ}"]
-            unique_identifier = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            out_path = os.path.join(self.val_im_dir, "dsm/tmp_pred_dsm_{}.tif".format(unique_identifier))
-            _ = self.val_dataset[0].get_dsm_from_nerf_prediction(rays.cpu(), depth.cpu(), dsm_path=out_path)
-            mae_ = compute_mae_and_save_dsm_diff(out_path,
-                                                 batch["src_id"][0],
-                                                 self.args.gt_dir,
-                                                 self.val_im_dir,
-                                                 0,
-                                                 save=False)
-            os.remove(out_path)
-        except:
-            mae_ = np.nan
+        aoi_id = batch["src_id"][0][:7]
+        gt_roi_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.txt")
+        gt_dsm_path = os.path.join(self.args.gt_dir, aoi_id + "_DSM.tif")
+        assert os.path.exists(gt_roi_path), f"{gt_roi_path} not found"
+        assert os.path.exists(gt_dsm_path), f"{gt_dsm_path} not found"
+        depth = results[f"depth_{typ}"]
+        unique_identifier = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        out_path = os.path.join(self.val_im_dir, "dsm/tmp_pred_dsm_{}.tif".format(unique_identifier))
+        _ = self.val_dataset[0].get_dsm_from_nerf_prediction(rays.cpu(), depth.cpu(), dsm_path=out_path)
+        mae_ = compute_mae_and_save_dsm_diff(out_path,
+                                             batch["src_id"][0],
+                                             self.args.gt_dir,
+                                             self.val_im_dir,
+                                             0,
+                                             save=False)
+        os.remove(out_path)
 
         self.log("val/loss", loss)
         self.log("val/psnr", psnr_)
