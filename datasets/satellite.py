@@ -1,6 +1,7 @@
 """
 This script defines the dataloader for a dataset of multi-view satellite images
 """
+import sys
 
 import numpy as np
 import os
@@ -179,6 +180,23 @@ class SatelliteDataset(Dataset):
         sat_utils.write_dict_to_json(d, f"{self.json_dir}/scene.loc")
         print("... done !")
 
+    def generate_train_cache(self):
+        os.makedirs(self.cache_dir, exist_ok=True)
+
+        with open(os.path.join(self.json_dir, "train.txt"), "r") as f:
+            json_files = f.read().split("\n")
+
+        for json_p in json_files:
+            # read json, image path and id
+            metadata = sat_utils.read_dict_from_json(json_p)
+            img_id = sat_utils.get_file_id(metadata["img"])
+
+            # if cache not exist, create rays and save to cache
+            cache_path = "{}/{}.data".format(self.cache_dir, img_id)
+            if not os.path.exists(cache_path):
+                rays = generate_rays_from_params(metadata, self.img_downscale)
+                torch.save(rays, cache_path)
+
     def load_data(self, json_files, verbose=False):
         """
         Load all relevant information from a set of json files
@@ -196,29 +214,26 @@ class SatelliteDataset(Dataset):
         for t, json_p in enumerate(json_files):
 
             # read json, image path and id
-            d = sat_utils.read_dict_from_json(json_p)
-            img_p = os.path.join(self.img_dir, d["img"])
-            img_id = sat_utils.get_file_id(d["img"])
+            metadata = sat_utils.read_dict_from_json(json_p)
+            img_p = os.path.join(self.img_dir, metadata["img"])
+            img_id = sat_utils.get_file_id(metadata["img"])
+
+            # # get rays from cache
+            # # if cache not exist, create rays and save to cache
+            # cache_path = "{}/{}.data".format(self.cache_dir, img_id)
+            # if os.path.exists(cache_path):
+            #     rays = torch.load(cache_path)
+            # else:
+            #     rays = generate_rays_from_metadata(metadata, self.img_downscale)
+
+            rays = generate_rays_from_params(metadata, self.img_downscale)
+            rays = self.normalize_rays(rays)
 
             # get rgb colors
             rgbs = load_tensor_from_rgb_geotiff(img_p, self.img_downscale)
 
-            # get rays from cache
-            # if cache not exist, create rays and save to cache
-            cache_path = "{}/{}.data".format(self.cache_dir, img_id)
-            if self.cache_dir is not None and os.path.exists(cache_path):
-                rays = torch.load(cache_path)
-            else:
-                rays = generate_rays_from_params(d, self.img_downscale)
-
-                if self.cache_dir is not None:
-                    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                    torch.save(rays, cache_path)
-
-            rays = self.normalize_rays(rays)
-
             # get sun direction
-            sun_dirs = self.get_sun_dirs(float(d["sun_elevation"]), float(d["sun_azimuth"]), rays.shape[0])
+            sun_dirs = self.get_sun_dirs(float(metadata["sun_elevation"]), float(metadata["sun_azimuth"]), rays.shape[0])
 
             all_ids += [t * torch.ones(rays.shape[0], 1)]
             all_rgbs += [rgbs]

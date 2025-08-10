@@ -73,10 +73,12 @@ def run_ba(img_dir, output_dir):
 
     ba_pipeline = BundleAdjustmentPipeline(ba_input_data, tracks_config=tracks_config, extra_ba_config=ba_extra)
     ba_pipeline.run()
-    # close logfile
+
+    # # close logfile
     sys.stderr = sys.__stderr__
     sys.stdout = sys.__stdout__
     log_file.close()
+
     print("... done !")
     print("Path to output files: {}".format(ba_input_data['out_dir']))
 
@@ -174,24 +176,46 @@ def create_train_test_splits(input_sample_ids, test_percent=0.15, min_test_sampl
 
     train_samples = input_sample_ids[train_indices].tolist()
     test_samples = input_sample_ids[test_indices].tolist()
+    print("train_samples", train_samples)
+    print("test_samples", test_samples)
 
     return train_samples, test_samples
 
 
 def read_DFC2019_lonlat_aoi(aoi_id, dfc_dir):
+    """
+    Generate bounding box with longitude and latitude
+    """
+    # print("read_DFC2019_lonlat_aoi")
     from bundle_adjust import geo_utils
 
     if aoi_id[:3] == "JAX":
         zonestring = "17R"
     elif aoi_id[:3] == "OMA":
-        zonestring = "14T"  # or 15T
+        zonestring = "15T"
     else:
-        raise ValueError("AOI not valid. Expected JAX/OMA_(3digits) but received {}".format(aoi_id))
+        raise ValueError("AOI not valid. Expected OMA_(3digits) but received {}".format(aoi_id))
 
     roi = np.loadtxt(os.path.join(dfc_dir, "Track3-Truth-JAX/" + aoi_id + "_DSM.txt"))
+
+    # x_offset, y_offset
+    # x_size = 512
+    # y_size = 512
+    # resolution = 0.5
     xoff, yoff, xsize, ysize, resolution = roi[0], roi[1], int(roi[2]), int(roi[2]), roi[3]
-    ulx, uly, lrx, lry = xoff, yoff + ysize * resolution, xoff + xsize * resolution, yoff
-    xmin, xmax, ymin, ymax = ulx, lrx, uly, lry
+
+    # upper left x, upper left y, lower right x, lower right y
+    ulx = xoff
+    uly = yoff + ysize * resolution
+    lrx = xoff + xsize * resolution
+    lry = yoff
+
+    # xmin, xmax, ymin, ymax = ulx, lrx, uly, lry
+    xmin = ulx
+    xmax = lrx
+    ymin = uly
+    ymax = lry
+
     easts = [xmin, xmin, xmax, xmax, xmin]
     norths = [ymin, ymax, ymax, ymin, ymin]
     lons, lats = geo_utils.lonlat_from_utm(easts, norths, zonestring)
@@ -201,6 +225,7 @@ def read_DFC2019_lonlat_aoi(aoi_id, dfc_dir):
 
 
 def crop_geotiff_lonlat_aoi(geotiff_path, output_path, lonlat_aoi):
+    # print("crop_geotiff_lonlat_aoi")
     with rasterio.open(geotiff_path, 'r') as src:
         profile = src.profile
         tags = src.tags()
@@ -210,6 +235,7 @@ def crop_geotiff_lonlat_aoi(geotiff_path, output_path, lonlat_aoi):
     rpc.row_offset -= y
     rpc.col_offset -= x
     not_pan = len(crop.shape) > 2
+
     if not_pan:
         profile["height"] = crop.shape[1]
         profile["width"] = crop.shape[2]
@@ -217,6 +243,7 @@ def crop_geotiff_lonlat_aoi(geotiff_path, output_path, lonlat_aoi):
         profile["height"] = crop.shape[0]
         profile["width"] = crop.shape[1]
         profile["count"] = 1
+
     with rasterio.open(output_path, 'w', **profile) as dst:
         if not_pan:
             dst.write(crop)
@@ -227,12 +254,14 @@ def crop_geotiff_lonlat_aoi(geotiff_path, output_path, lonlat_aoi):
 
 
 def create_satellite_dataset(aoi_id, dfc_dir, output_dir, ba=True, crop_aoi=True, splits=False):
-    img_dir = os.path.join(dfc_dir, "Track3-RGB-JAX/{}".format(aoi_id))
+    print("start")
+    img_dir = os.path.join(dfc_dir, "Track3-RGB-OMA/{}".format(aoi_id))
     os.makedirs(output_dir, exist_ok=True)
 
     if crop_aoi:
         # prepare crops
         aoi_lonlat = read_DFC2019_lonlat_aoi(aoi_id, dfc_dir)
+
         crops_dir = os.path.join(output_dir, "crops")
         os.makedirs(crops_dir, exist_ok=True)
         myimages = sorted(glob.glob(img_dir + "/*.tif"))
@@ -251,6 +280,7 @@ def create_satellite_dataset(aoi_id, dfc_dir, output_dir, ba=True, crop_aoi=True
     # create train and test splits
     if splits:
         json_files = [os.path.basename(p) for p in glob.glob(os.path.join(output_dir, "*.json"))]
+
         train_samples, test_samples = create_train_test_splits(json_files)
         with open(os.path.join(output_dir, "train.txt"), "w+") as f:
             f.write("\n".join(train_samples))
@@ -263,3 +293,9 @@ def create_satellite_dataset(aoi_id, dfc_dir, output_dir, ba=True, crop_aoi=True
 if __name__ == '__main__':
     import fire
     fire.Fire(create_satellite_dataset)
+
+
+# Priority
+# 1. Omaha
+# 2. Train 55 scenes
+# 3. Collect metrics -> system metrics -> GPU and CPU (training)
