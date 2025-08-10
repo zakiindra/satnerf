@@ -1,0 +1,4 @@
+tensorrt
+torch-tensorrt
+nvidia-modelopt[all]
+polygraphy

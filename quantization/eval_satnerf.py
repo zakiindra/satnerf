@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore")
 # os.environ["CUDA_VISIBLE_DEVICES"] = "0, 1"
 
 def extract_model_state_dict(ckpt_path, model_name='model', prefixes_to_ignore=[]):
-    checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'))
+    checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'), weights_only=False)
     # print(checkpoint.keys())
     # print(checkpoint['state_dict'].keys())
     # print(model_name, prefixes_to_ignore)
@@ -99,13 +99,12 @@ def batched_inference(models, rays, ts, args):
 
 
 def load_nerf(run_id, logs_dir, ckpts_dir, epoch_number):
-    log_path = os.path.join(run_id, logs_dir)
+    log_path = os.path.join(logs_dir, run_id)
     with open('{}/opts.json'.format(log_path), 'r') as f:
         args = argparse.Namespace(**json.load(f))
 
-    # checkpoint_path = os.path.join(ckpts_dir, "{}/epoch={}.ckpt".format(run_id, epoch_number))
-    # checkpoint_path =
-    checkpoint_path = os.path.join("{}/epoch={}.ckpt".format(ckpts_dir, epoch_number))
+    checkpoint_path = os.path.join(ckpts_dir, "{}/epoch={}.ckpt".format(run_id, epoch_number))
+    # checkpoint_path = os.path.join("{}/epoch={}.ckpt".format(ckpts_dir, epoch_number))
     print(checkpoint_path)
     print("Using", checkpoint_path)
     if not os.path.exists(checkpoint_path):
@@ -150,17 +149,13 @@ def save_nerf_output_to_images(dataset, sample, results, out_dir, epoch_number):
     out_path = "{}/depth/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
     train_utils.save_output_image(alts.reshape(1, H, W), out_path, src_path)
     # save dsm
-    # out_path = "{}/dsm/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
-    out_path = "/data/rdr78068/dsm/dsm.tif"
+    out_path = "{}/dsm/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
     dsm = dataset.get_dsm_from_nerf_prediction(rays.cpu(), depth.cpu(), dsm_path=out_path)
     # save rgb image
-    # out_path = "{}/rgb/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
-    out_path = "/data/rdr78068/rgb/rgb.tif"
+    out_path = "{}/rgb/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
     train_utils.save_output_image(img, out_path, src_path)
     # save gt rgb image
-    # out_path = "{}/gt_rgb/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
-    # out_path = ".tif".format(out_dir, src_id, epoch_number)
-    out_path = "/data/rdr78068/gtd/gtd.tif"
+    out_path = "{}/gt_rgb/{}_epoch{}.tif".format(out_dir, src_id, epoch_number)
     train_utils.save_output_image(img_gt, out_path, src_path)
     # save shadow modelling images
     if f"sun_{typ}" in results:

@@ -19,6 +19,8 @@ import modelopt.torch.quantization as mtq
 from modelopt.torch.quantization.config import QuantizeConfig
 from modelopt.torch.quantization import utils as quant_utils
 
+from models.satnerf_trt import SatNeRF
+
 MODELOPT_AVAILABLE = True
 
 # TensorRT imports (optional)
@@ -30,11 +32,12 @@ TENSORRT_AVAILABLE = True
 class QuantizedNeRF_pl(pl.LightningModule):
     """NeRF with Quantization Aware Training support"""
 
-    def __init__(self, args, base_model: Optional[pl.LightningModule] = None):
+    def __init__(self, args, models=None, base_model: Optional[pl.LightningModule] = None):
         super().__init__()
         self.args = args
         self.qat_enabled = getattr(args, 'enable_qat', False)
         self.quantization_config = getattr(args, 'quantization_config', None)
+        self.models = models
 
         # Initialize base model or create new one
         if base_model is not None:
@@ -57,7 +60,6 @@ class QuantizedNeRF_pl(pl.LightningModule):
 
     def _init_base_components(self):
         """Initialize base NeRF components (fallback method)"""
-        from models import load_model
         from metrics import load_loss, DepthLoss, SNerfLoss
 
         self.loss = load_loss(self.args)
@@ -81,20 +83,25 @@ class QuantizedNeRF_pl(pl.LightningModule):
         """Define NeRF models"""
         from models import load_model
 
-        self.models = {}
-        self.nerf_coarse = load_model(self.args)
-        self.models['coarse'] = self.nerf_coarse
-
-        if self.args.n_importance > 0:
-            self.nerf_fine = load_model(self.args)
-            self.models['fine'] = self.nerf_fine
-
-        if self.args.model == "sat-nerf":
-            self.embedding_t = torch.nn.Embedding(
-                self.args.t_embbeding_vocab,
-                self.args.t_embbeding_tau
-            )
-            self.models["t"] = self.embedding_t
+        print(self.models)
+        if self.models == None:
+            self.models = {}
+            self.nerf_coarse = SatNeRF(layers=self.args.fc_layers,
+                                       feat=self.args.fc_units,
+                                       t_embedding_dims=self.args.t_embbeding_tau)
+            # self.nerf_coarse = load_model(self.args)
+            self.models['coarse'] = self.nerf_coarse
+    
+            if self.args.n_importance > 0:
+                self.nerf_fine = load_model(self.args)
+                self.models['fine'] = self.nerf_fine
+    
+            if self.args.model == "sat-nerf":
+                self.embedding_t = torch.nn.Embedding(
+                    self.args.t_embbeding_vocab,
+                    self.args.t_embbeding_tau
+                )
+                self.models["t"] = self.embedding_t
 
     def _setup_quantization(self):
         """Setup quantization for all models"""
@@ -131,8 +138,10 @@ class QuantizedNeRF_pl(pl.LightningModule):
             # Create quantization config
             # config = QuantizeConfig(quant_config)
 
+            forward_loop_fn = self.get_forward_fn()
+
             # Apply quantization
-            quantized_model = mtq.quantize(model, quant_config, forward_loop=None)
+            quantized_model = mtq.quantize(model, quant_config, forward_loop=forward_loop_fn)
 
             # Enable training mode for QAT
             quantized_model.train()
@@ -145,29 +154,30 @@ class QuantizedNeRF_pl(pl.LightningModule):
         self.models = quantized_models
 
         # Update individual model references
-        if 'coarse' in self.models:
-            self.nerf_coarse = self.models['coarse']
-        if 'fine' in self.models:
-            self.nerf_fine = self.models['fine']
-        if 't' in self.models:
-            self.embedding_t = self.models['t']
+        if "coarse" in self.models:
+            self.nerf_coarse = self.models["coarse"]
+        if "fine" in self.models:
+            self.nerf_fine = self.models["fine"]
+        if "t" in self.models:
+            self.embedding_t = self.models["t"]
 
         print(self.models["t"])
 
     def forward(self, rays, ts):
         """Forward pass with quantized models"""
-        from rendering import render_rays
+        from .rendering_trt import render_rays
 
         chunk_size = self.args.chunk
         batch_size = rays.shape[0]
 
         results = defaultdict(list)
+        metadata = None
         for i in range(0, batch_size, chunk_size):
-            rendered_ray_chunks = render_rays(
+            rendered_ray_chunks, metadata = render_rays(
                 self.models,
                 self.args,
-                rays[i:i + chunk_size],
-                ts[i:i + chunk_size] if ts is not None else None
+                rays[i : i + chunk_size],
+                ts[i : i + chunk_size] if ts is not None else None,
             )
 
             for k, v in rendered_ray_chunks.items():
@@ -175,7 +185,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
 
         for k, v in results.items():
             results[k] = torch.cat(v, 0)
-        return results
+        return results, metadata
 
     def training_step(self, batch, batch_nb):
         """Training step with QAT support"""
@@ -189,7 +199,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
         rgbs = batch["color"]["rgbs"]
         ts = None if not self.use_ts else batch["color"]["ts"].squeeze()
 
-        results = self(rays, ts)
+        results, _ = self(rays, ts)
 
         # Loss computation (same as original)
         if 'beta_coarse' in results and self.current_epoch < 2:
@@ -219,12 +229,9 @@ class QuantizedNeRF_pl(pl.LightningModule):
         for k in loss_dict.keys():
             self.log("train/{}".format(k), loss_dict[k])
 
-        self.log('train_psnr', psnr_, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_psnr", psnr_, on_step=True, on_epoch=True, prog_bar=True)
 
-        return {
-            'loss': loss,
-            'train/psnr': psnr_
-        }
+        return {"loss": loss, "train/psnr": psnr_}
 
     def validation_step(self, batch, batch_nb):
         """Validation step - same as original but with quantized models"""
@@ -239,12 +246,16 @@ class QuantizedNeRF_pl(pl.LightningModule):
         rgbs = rgbs.squeeze()
 
         if self.args.model == "sat-nerf":
+            print(predefined_val_ts)
+            print(batch["src_id"][0])
             t = predefined_val_ts(batch["src_id"][0])
+            print(t)
             ts = t * torch.ones(rays.shape[0], 1).long().cuda().squeeze()
         else:
             ts = None
 
-        results = self(rays, ts)
+        results, metadata = self(rays, ts)
+        self.metadata = metadata
         loss, loss_dict = self.loss(results, rgbs)
 
         self.is_validation_image = True
@@ -301,12 +312,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
         for k in loss_dict.keys():
             self.log("val/{}".format(k), loss_dict[k])
 
-        return {
-            "loss": loss,
-            "val/psnr": psnr_,
-            "val/ssim": ssim_,
-            "val/mae": mae_
-        }
+        return {"loss": loss, "val/psnr": psnr_, "val/ssim": ssim_, "val/mae": mae_}
 
     def configure_optimizers(self):
         """Configure optimizers for QAT"""
@@ -317,31 +323,30 @@ class QuantizedNeRF_pl(pl.LightningModule):
 
         max_epochs = self.args.max_epochs
         scheduler = train_utils.get_scheduler(
-            optimizer=self.optimizer,
-            lr_scheduler='step',
-            num_epochs=max_epochs
+            optimizer=self.optimizer, lr_scheduler="step", num_epochs=max_epochs
         )
 
         return {
-            'optimizer': self.optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'interval': 'epoch'
-            }
+            "optimizer": self.optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "epoch"},
         }
 
     def setup(self, stage: str) -> None:
         """Setup datasets"""
         if stage == "fit":
             from datasets import load_train_dataset, load_val_dataset
+
             self.train_dataset = [] + load_train_dataset(self.args)
             self.val_dataset = [] + load_val_dataset(self.args)
 
     def prepare_data(self) -> None:
         """Prepare data"""
         from datasets.satellite_dataset import init_scaling_params, generate_train_cache
+
         init_scaling_params(self.args.root_dir, float(self.args.img_downscale))
-        generate_train_cache(self.args.root_dir, self.args.cache_dir, float(self.args.img_downscale))
+        generate_train_cache(
+            self.args.root_dir, self.args.cache_dir, float(self.args.img_downscale)
+        )
 
     def train_dataloader(self):
         """Train dataloader"""
@@ -352,7 +357,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
             shuffle=True,
             num_workers=16,
             batch_size=self.args.batch_size,
-            pin_memory=True
+            pin_memory=True,
         )
         loaders = {"color": a}
 
@@ -362,7 +367,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
                 shuffle=True,
                 num_workers=16,
                 batch_size=self.args.batch_size,
-                pin_memory=True
+                pin_memory=True,
             )
             loaders["depth"] = b
 
@@ -377,7 +382,7 @@ class QuantizedNeRF_pl(pl.LightningModule):
             shuffle=False,
             num_workers=16,
             batch_size=1,
-            pin_memory=True
+            pin_memory=True,
         )
 
     def prepare_for_export(self):
@@ -412,26 +417,36 @@ class QuantizedNeRF_pl(pl.LightningModule):
         if not self.qat_enabled:
             raise RuntimeWarning("QAT is not enabled, exporting regular model")
 
-        self.prepare_for_export()
+        # self.prepare_for_export()
 
         # Ensure model is on GPU and in eval mode
         self.cuda()
         self.eval()
 
         # Calibrate if not already done
-        print("Calibration checking")
-        if not self._is_calibrated():
-            print("⚠️ Model not calibrated, running calibration...")
-            self.calibrate_quantizers(self.val_dataloader(), num_batches=5)
+        # print("Calibration checking")
+        # if not self._is_calibrated():
+        #     print("⚠️ Model not calibrated, running calibration...")
+        #     self.calibrate_quantizers(self.val_dataloader(), num_batches=5)
 
+        # # Force calibration regardless of current state
+        # print("🔧 Running calibration before export...")
+        # import modelopt.torch.quantization as mtq
+
+        # self.calibrate_quantizers(self.val_dataloader(), num_batches=10)
+
+        print("📦 Exporting with ModelOpt...")
         os.makedirs(os.path.dirname(export_path), exist_ok=True)
 
-        if format.lower() == "onnx":
-            self._export_onnx(export_path)
-        elif format.lower() == "tensorrt" and TENSORRT_AVAILABLE:
-            self._export_tensorrt(export_path)
-        else:
-            raise ValueError(f"Unsupported export format: {format}")
+        # Create dummy input for export
+        device = next(self.parameters()).device
+        dummy_rays = torch.randn(1024, 11).to(device)
+        dummy_ts = torch.randint(0, 10, (1024,)).to(device) if self.use_ts else None
+
+        # # Use ModelOpt's export
+        # if format.lower() == "onnx":
+        #     torch.onnx.export()
+        #     print(f"✓ Model exported to ONNX: {export_path}")
 
     def _is_calibrated(self):
         """Check if quantizers are calibrated"""
@@ -443,26 +458,45 @@ class QuantizedNeRF_pl(pl.LightningModule):
                     return False
         return True
 
-    def _export_onnx(self, export_path: str):
+    def export_onnx(self, export_path: str):
         """Export to ONNX format"""
         # Ensure model is on GPU
         device = next(self.parameters()).device
-        print("_export_onnx device", device)
+        print("export_onnx device", device)
 
-        # Create dummy input for tracing
-        dummy_rays = torch.randn(1024, 11).to(device)
-        dummy_ts = torch.randint(0, 10, (1024,)).to(device) if self.use_ts else None
+        input_xyz = torch.randn(self.metadata["shape"]["input_xyz"], dtype=torch.float32, device=device)
+        # input_direction = None  # Originally there is no input_direction parameter
+        input_direction = torch.zeros(self.metadata["shape"]["input_xyz"], dtype=torch.float32,
+                                      device=device)  # Dummy zeros tensor for ONNX conversion
+        input_sun_direction = torch.randn(self.metadata["shape"]["input_sun_dir"], dtype=torch.float32, device=device)
+        input_t = torch.randn(self.metadata["shape"]["input_t"], dtype=torch.float32, device=device)
+
+        print(f"ONNX Conversion with the below shapes:")
+        print(f"xyz_:\t\t\t{self.metadata['shape']['input_xyz']}")
+        print(f"direction (zeroes):\t{self.metadata['shape']['input_xyz']}")
+        print(f"sun direction:\t\t{self.metadata['shape']['input_sun_dir']}")
+        print(f"input t:\t\t{self.metadata['shape']['input_t']}")
 
         self.eval()
 
         # Prepare inputs
-        inputs = (dummy_rays, dummy_ts) if dummy_ts is not None else (dummy_rays, None)
-        input_names = ['rays', 'transient'] if self.use_ts else ['rays']
+        inputs = (input_xyz, input_direction, input_sun_direction, input_t)
+        input_names = ["input_xyz", "input_dir", "input_sun_dir", "input_t"]
+        output_names = ["output"]
         dynamic_axes = {
-            'rays': {0: 'batch_size'},
+            "input_xyz": {0: "num_points"},
+            "input_dir": {0: "num_points"},
+            "input_sun_dir": {0: "num_points"},
+            "input_t": {0: "num_points"},
+            "output": {0: "num_points"}
         }
-        if self.use_ts:
-            dynamic_axes['transient'] = {0: 'batch_size'}
+        # if self.use_ts:
+        #     dynamic_axes['transient'] = {0: 'batch_size'}
+
+        # for name, module in self.models['coarse'].named_modules():
+        #     print(name, module)
+
+        mtq.calibrate(self.models["coarse"], forward_loop=self.get_forward_fn())
 
         with torch.no_grad():
             torch.onnx.export(
@@ -470,11 +504,11 @@ class QuantizedNeRF_pl(pl.LightningModule):
                 inputs,
                 export_path,
                 input_names=input_names,
-                output_names=['rgb', 'depth', 'weights'],
+                output_names=output_names,
                 dynamic_axes=dynamic_axes,
-                opset_version=11,
+                opset_version=13,
                 do_constant_folding=True,
-                verbose=False
+                # verbose=False
             )
         print(f"✓ Model exported to ONNX: {export_path}")
 
@@ -498,12 +532,50 @@ class QuantizedNeRF_pl(pl.LightningModule):
             self,
             inputs=inputs,
             enabled_precisions={torch.float, torch.half, torch.int8},
-            workspace_size=1 << 22  # 4MB
+            workspace_size=1 << 22,  # 4MB
         )
 
         # Save TensorRT model
         torch.jit.save(trt_model, export_path)
         print(f"✓ Model exported to TensorRT: {export_path}")
+
+    # def calibrate_quantizers(self, calibration_dataloader, num_batches=10):
+    #     """Calibrate quantizers using sample data"""
+    #     if not self.qat_enabled:
+    #         return
+    #
+    #     print("🔧 Calibrating quantizers...")
+    #     self.eval()
+    #
+    #     # Enable calibration mode
+    #     import modelopt.torch.quantization as mtq
+    #
+    #     with torch.no_grad():
+    #         batch_count = 0
+    #         for batch_idx, batch in enumerate(calibration_dataloader):
+    #             if batch_count >= num_batches:
+    #                 break
+    #
+    #             # Move to GPU if available
+    #             rays = batch["rays"].cuda() if torch.cuda.is_available() else batch["rays"]
+    #
+    #             # Handle timestamp for sat-nerf
+    #             if self.use_ts:
+    #                 from eval_satnerf import predefined_val_ts
+    #                 t = predefined_val_ts(batch["src_id"][0])
+    #                 ts = t * torch.ones(rays.shape[0], 1).long()
+    #                 if torch.cuda.is_available():
+    #                     ts = ts.cuda()
+    #             else:
+    #                 ts = None
+    #
+    #             # Forward pass for calibration
+    #             _ = self(rays, ts)
+    #             batch_count += 1
+    #
+    #             print(f"Calibrated batch {batch_count}/{num_batches}")
+    #
+    #     print("✅ Quantizer calibration complete!")
 
     def calibrate_quantizers(self, calibration_dataloader, num_batches=10):
         """Calibrate quantizers using sample data"""
@@ -511,10 +583,11 @@ class QuantizedNeRF_pl(pl.LightningModule):
             return
 
         print("🔧 Calibrating quantizers...")
-        self.eval()
 
-        # Enable calibration mode
+        # Set model to calibration mode
         import modelopt.torch.quantization as mtq
+
+        self.eval()
 
         with torch.no_grad():
             batch_count = 0
@@ -522,34 +595,108 @@ class QuantizedNeRF_pl(pl.LightningModule):
                 if batch_count >= num_batches:
                     break
 
-                # Move to GPU if available
-                rays = batch["rays"].cuda() if torch.cuda.is_available() else batch["rays"]
-
-                # Handle timestamp for sat-nerf
-                if self.use_ts:
-                    from eval_satnerf import predefined_val_ts
-                    t = predefined_val_ts(batch["src_id"][0])
-                    ts = t * torch.ones(rays.shape[0], 1).long()
+                try:
+                    # Move to GPU if available
+                    rays = batch["rays"]
                     if torch.cuda.is_available():
-                        ts = ts.cuda()
-                else:
-                    ts = None
+                        rays = rays.cuda()
+                    rays = rays.squeeze()
 
-                # Forward pass for calibration
-                _ = self(rays, ts)
-                batch_count += 1
+                    # Handle timestamp for sat-nerf
+                    if self.use_ts:
+                        from eval_satnerf import predefined_val_ts
 
-                print(f"Calibrated batch {batch_count}/{num_batches}")
+                        t = predefined_val_ts(batch["src_id"][0])
+                        ts = t * torch.ones(rays.shape[0], 1).long()
+                        if torch.cuda.is_available():
+                            ts = ts.cuda().squeeze()
+                    else:
+                        ts = None
 
+                    # Forward pass for calibration - use smaller chunks
+                    chunk_size = min(1024, rays.shape[0])
+                    for i in range(0, rays.shape[0], chunk_size):
+                        ray_chunk = rays[i : i + chunk_size]
+                        ts_chunk = ts[i : i + chunk_size] if ts is not None else None
+                        _ = self(ray_chunk, ts_chunk)
+
+                    batch_count += 1
+                    print(f"Calibrated batch {batch_count}/{num_batches}")
+
+                except Exception as e:
+                    print(f"Calibration error on batch {batch_count}: {e}")
+                    continue
+
+        # Disable calibration mode
         print("✅ Quantizer calibration complete!")
 
     def on_fit_end(self) -> None:
         print("on fit end")
-        for name, param in self.models['t'].named_parameters():
+
+        # Ensure all models are on the same device
+        device = next(self.parameters()).device
+        for name, model in self.models.items():
+            model.to(device)
+
+        for name, param in self.models["t"].named_parameters():
             print(f"Parameter '{name}' device: {param.device}")
         for name, param in self.embedding_t.named_parameters():
             print(f"Parameter '{name}' device: {param.device}")
 
+    def get_forward_fn(self):
+        def mtq_forward_fn(model):
+
+            from torch.utils.data import DataLoader
+            from datasets import load_train_dataset, load_val_dataset
+
+            print("Do forward fn")
+            val_dataset = [] + load_val_dataset(self.args)
+
+            dataloader = DataLoader(
+                val_dataset[0],
+                shuffle=False,
+                num_workers=16,
+                batch_size=1,
+                pin_memory=True,
+            )
+
+            batch_count = 0
+            with torch.no_grad():
+                for batch_idx, batch in enumerate(dataloader):
+                    try:
+                        # Move to GPU if available
+                        rays = batch["rays"]
+                        if torch.cuda.is_available():
+                            rays = rays.cuda()
+                        rays = rays.squeeze()
+
+                        if self.use_ts:
+                            from eval_satnerf import predefined_val_ts
+
+                            t = predefined_val_ts(batch["src_id"][0])
+                            ts = t * torch.ones(rays.shape[0], 1).long()
+                            if torch.cuda.is_available():
+                                ts = ts.cuda()
+                            ts = ts.squeeze()
+                        else:
+                            ts = None
+
+                        # Forward pass for calibration - use smaller chunks
+                        chunk_size = min(1024, rays.shape[0])
+                        for i in range(0, rays.shape[0], chunk_size):
+                            ray_chunk = rays[i : i + chunk_size]
+                            ts_chunk = (
+                                ts[i : i + chunk_size] if ts is not None else None
+                            )
+                            _ = self(ray_chunk, ts_chunk)
+
+                        print(f"Calibrated batch {batch_count}")
+
+                    except Exception as e:
+                        print(f"Calibration error on batch {batch_count}: {e}")
+                        continue
+
+        return mtq_forward_fn
 
 
 def convert_to_qat_model(original_model: pl.LightningModule, args) -> QuantizedNeRF_pl:
