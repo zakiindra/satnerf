@@ -7,7 +7,7 @@ import json
 import train_utils
 from models import load_model
 from datasets import SatelliteDataset
-from rendering_trt import render_rays
+from rendering_trt import render_rays_trt
 from collections import defaultdict
 import metrics
 import numpy as np
@@ -72,7 +72,7 @@ def batched_inference(models, runner, rays, ts, args):
         # print(i)
         # print(i+chunk_size)
         rendered_ray_chunks = \
-            render_rays(models,
+            render_rays_trt(models,
                         runner,
                         args,
                         rays[i:i + chunk_size],

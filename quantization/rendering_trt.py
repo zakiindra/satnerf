@@ -7,7 +7,6 @@ and predicts a volume density at each location (sigma) and the color with which 
 import sys
 import time
 
-from models.satnerf import inference_trt
 import torch
 
 from polygraphy.backend.common import BytesFromPath
@@ -55,8 +54,7 @@ def sample_pdf(bins, weights, N_importance, det=False, eps=1e-5):
     samples = bins_g[...,0] + (u-cdf_g[...,0])/denom * (bins_g[...,1]-bins_g[...,0])
     return samples
 
-
-def render_rays(models, runner, args, rays, ts):
+def render_rays_trt(models, runner, args, rays, ts):
     # get config values
     N_samples = args.n_samples
     N_importance = args.n_importance
@@ -106,11 +104,128 @@ def render_rays(models, runner, args, rays, ts):
     #         result['transparency_sc'] = result_["transparency"]
     #         result['sun_sc'] = result_["sun"]
     if variant == "sat-nerf":
-        from models.satnerf import inference
+        from models.satnerf_trt import inference_trt
         sun_d = rays[:, 8:11]
         rays_t = models['t'](ts) if ts is not None else None
         # start = time.time()
         result, metadata = inference_trt(runner, args, xyz_coarse, z_vals, rays_d=None, sun_d=sun_d, rays_t=rays_t)
+        # print("[rendering.render_rays:99] Inference time: ", (time.time() - start) * 1000)
+
+        # if args.sc_lambda > 0:
+        #     # solar correction
+        #     xyz_coarse = rays_o.unsqueeze(1) + sun_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
+        #     result_tmp = inference(models[typ], args, xyz_coarse, z_vals, rays_d=None, sun_d=sun_d, rays_t=rays_t)
+        #     result['weights_sc'] = result_tmp["weights"]
+        #     result['transparency_sc'] = result_tmp["transparency"]
+        #     result['sun_sc'] = result_tmp["sun"]
+    # else:
+    #     # classic nerf
+    #     from models.nerf import inference
+    #     # print("[rendering.render_rays:95] xyz_coarse shape: ", xyz_coarse.shape)
+    #     result = inference(models[typ], args, xyz_coarse, z_vals, rays_d=rays_d)
+    result_ = {}
+    for k in result.keys():
+        result_[f"{k}_{typ}"] = result[k]
+
+    # run fine model
+    # if N_importance > 0:
+
+    #     # sample depths for fine model
+    #     z_vals_mid = 0.5 * (z_vals[:, :-1] + z_vals[:, 1:])  # (N_rays, N_samples-1) interval mid points
+    #     z_vals_ = sample_pdf(z_vals_mid, result_['weights_coarse'][:, 1:-1],
+    #                          N_importance, det=(perturb == 0)).detach()
+    #     # detach so that grad doesn't propogate to weights_coarse from here
+    #     z_vals, _ = torch.sort(torch.cat([z_vals, z_vals_], -1), -1)
+
+    #     # discretize rays for fine model
+    #     xyz_fine = rays_o.unsqueeze(1) + rays_d.unsqueeze(1) * z_vals.unsqueeze(2) # (N_rays, N_samples+N_importance, 3)
+
+    #     typ = "fine"
+    #     if variant == "s-nerf":
+    #         sun_d = rays[:, 8:11]
+    #         # render using main set of rays
+    #         result = inference(models[typ], args, xyz_fine, z_vals, rays_d=rays_d_, sun_d=sun_d)
+    #         if args.sc_lambda > 0:
+    #             # solar correction
+    #             xyz_fine = rays_o.unsqueeze(1) + sun_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
+    #             result_ = inference(models[typ], args, xyz_fine, z_vals, rays_d=None, sun_d=sun_d, rays_t=None)
+    #             result['weights_sc'] = result_["weights"]
+    #             result['transparency_sc'] = result_["transparency"]
+    #             result['sun_sc'] = result_["sun"]
+    #     elif variant == "sat-nerf":
+    #         sun_d = rays[:, 8:11]
+    #         rays_t = models['t'](ts) if ts is not None else None
+    #         result = inference(models[typ], args, xyz_fine, z_vals, rays_d=None, sun_d=sun_d, rays_t=rays_t)
+    #         if args.sc_lambda > 0:
+    #             # solar correction
+    #             xyz_fine = rays_o.unsqueeze(1) + sun_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
+    #             result_ = inference(models[typ], args, xyz_fine, z_vals, rays_d=None, sun_d=sun_d, rays_t=rays_t)
+    #             result['weights_sc'] = result_["weights"]
+    #             result['transparency_sc'] = result_["transparency"]
+    #             result['sun_sc'] = result_["sun"]
+    #     else:
+    #         result = inference(models[typ], args, xyz_fine, z_vals, rays_d=rays_d)
+    #     for k in result.keys():
+    #         result_["{}_{}".format(k, typ)] = result[k]
+
+    return result_, metadata
+
+
+def render_rays(models, args, rays, ts):
+    # get config values
+    N_samples = args.n_samples
+    N_importance = args.n_importance
+    variant = args.model
+    use_disp = False
+    perturb = 1.0
+    # print("[rendering.render_rays:60] N_samples, N_importance, variant, use_disp, perturb:", N_samples, N_importance, variant, use_disp, perturb)
+
+    # get rays, initial shape is (471228, 11)
+    rays_o, rays_d, near, far = rays[:, 0:3],  rays[:, 3:6], rays[:, 6:7], rays[:, 7:8]
+    # print("[rendering.render_rays:64] rays_o, rays_d, near, far:", rays_o.shape, rays_d.shape, near.shape, far.shape)
+    # sample depths for coarse model
+    # create 64 values equally spaced from 0 to 1
+    z_steps = torch.linspace(0, 1, N_samples, device=rays.device)
+    # print("[rendering.render_rays:69] z_steps.shape: ", z_steps.shape)
+    # print("[rendering.render_rays:64] z_steps: ", z_steps)
+    if not use_disp:  # use linear sampling in depth space
+        z_vals = near * (1-z_steps) + far * z_steps
+    else:  # use linear sampling in disparity space
+        z_vals = 1/(1/near * (1-z_steps) + 1/far * z_steps)
+    # print("[rendering.render_rays:75] z_vals.shape: ", z_vals.shape)
+
+    if perturb > 0:  # perturb sampling depths (z_vals)
+        z_vals_mid = 0.5 * (z_vals[:, :-1] + z_vals[:, 1:])  # (N_rays, N_samples-1) interval mid points
+        # get intervals between samples
+        upper = torch.cat([z_vals_mid, z_vals[:, -1:]], -1)
+        lower = torch.cat([z_vals[:, :1], z_vals_mid], -1)
+
+        perturb_rand = perturb * torch.rand_like(z_vals)
+        z_vals = lower + (upper - lower) * perturb_rand
+
+    # discretize rays into a set of 3d points (N_rays, N_samples_, 3), one point for each depth of each ray
+    xyz_coarse = rays_o.unsqueeze(1) + rays_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
+
+    # run coarse model
+    typ = "coarse"
+    # if variant == "s-nerf":
+    #     from models.snerf import inference
+    #     sun_d = rays[:, 8:11]
+    #     # render using main set of rays
+    #     result = inference(models[typ], args, xyz_coarse, z_vals, rays_d=None, sun_d=sun_d)
+    #     if args.sc_lambda > 0:
+    #         # solar correction
+    #         xyz_coarse = rays_o.unsqueeze(1) + sun_d.unsqueeze(1) * z_vals.unsqueeze(2)  # (N_rays, N_samples, 3)
+    #         result_ = inference(models[typ], args, xyz_coarse, z_vals, rays_d=None, sun_d=sun_d)
+    #         result['weights_sc'] = result_["weights"]
+    #         result['transparency_sc'] = result_["transparency"]
+    #         result['sun_sc'] = result_["sun"]
+    if variant == "sat-nerf":
+        from models.satnerf_trt import inference
+        sun_d = rays[:, 8:11]
+        rays_t = models['t'](ts) if ts is not None else None
+        # start = time.time()
+        result, metadata = inference(models[typ], args, xyz_coarse, z_vals, rays_d=None, sun_d=sun_d, rays_t=rays_t)
         # print("[rendering.render_rays:99] Inference time: ", (time.time() - start) * 1000)
 
         # if args.sc_lambda > 0:
