@@ -2,3 +2,14 @@ __pycache__
 .idea
 .ipynb_checkpoints
 **exp**
+**generated**
+nohup.out
+bgerr.log
+
+datasets/Track3*
+datasets/ba_preprocess
+datasets/cache_dir
+datasets/preprocess
+datasets/DFC2019
+datasets/preprocess-profiling
+datasets/root_dir

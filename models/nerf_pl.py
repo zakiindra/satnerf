@@ -108,7 +108,7 @@ class NeRF_pl(pl.LightningModule):
     def train_dataloader(self):
         a = DataLoader(self.train_dataset[0],
                        shuffle=True,
-                       num_workers=16,
+                       num_workers=1,
                        batch_size=self.args.batch_size,
                        pin_memory=True)
         loaders = {
@@ -118,7 +118,7 @@ class NeRF_pl(pl.LightningModule):
         if self.depth:
             b = DataLoader(self.train_dataset[1],
                            shuffle=True,
-                           num_workers=16,
+                           num_workers=1,
                            batch_size=self.args.batch_size,
                            pin_memory=True)
             loaders["depth"] = b
@@ -128,7 +128,7 @@ class NeRF_pl(pl.LightningModule):
     def val_dataloader(self):
         return DataLoader(self.val_dataset[0],
                           shuffle=False,
-                          num_workers=16,
+                          num_workers=1,
                           batch_size=1,  # validate one image (H*W rays) at a time
                           pin_memory=True)
 

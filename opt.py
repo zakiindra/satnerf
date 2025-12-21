@@ -47,13 +47,13 @@ def get_opts():
                         help='number of training iterations')
     parser.add_argument('--max_epochs', type=int, default=10,
                         help='number of training epochs')
-    parser.add_argument('--save_every_n_epochs', type=int, default=5,
+    parser.add_argument('--save_every_n_epochs', type=int, default=1,
                         help="save checkpoints and debug files every n epochs")
     parser.add_argument('--fc_units', type=int, default=512,
                         help='number of fully connected units in the main block of layers')
     parser.add_argument('--fc_layers', type=int, default=8,
                         help='number of fully connected layers in the main block of layers')
-    parser.add_argument('--n_samples', type=int, default=64,
+    parser.add_argument('--n_samples', type=int, default=32,
                         help='number of coarse scale discrete points per input ray')
     parser.add_argument('--n_importance', type=int, default=0,
                         help='number of fine scale discrete points per input ray')

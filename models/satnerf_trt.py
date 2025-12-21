@@ -102,8 +102,7 @@ def inference(model, args, rays_xyz, z_vals, rays_d=None, sun_d=None, rays_t=Non
     Args:
         model: NeRF model (coarse or fine)
         args: all input arguments
-        rays_xyz: (N_rays, N_samples_, 3) sampled positions in the object space
-                  N_samples_ is the number of sampled points in each ray;
+        rays_xyz: (N_rays, N_samples_, 3) sampled positions in the object space N_samples_ is the number of sampled points in each ray;
                             = N_samples for coarse model
                             = N_samples+N_importance for fine model
         z_vals: (N_rays, N_samples_) depths of the sampled positions

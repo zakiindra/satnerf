@@ -1,6 +1,14 @@
 from .nerf import Mapping, Siren, sine_init, first_layer_sine_init
 import torch
 
+
+def cumprod_exportable(x, dim=-1, eps=1e-9):
+    if torch.onnx.is_in_onnx_export():
+        x = torch.clamp(x, min=eps)
+        return torch.exp(torch.cumsum(torch.log(x), dim=dim))
+    return torch.cumprod(x, dim=dim)
+
+
 def inference(model, args, rays_xyz, z_vals, rays_d=None, sun_d=None, rays_t=None):
     """
     Runs the nerf model using a batch of input rays
@@ -68,7 +76,8 @@ def inference(model, args, rays_xyz, z_vals, rays_d=None, sun_d=None, rays_t=Non
     alphas = 1 - torch.exp(-deltas * torch.relu(sigmas + noise))  # (N_rays, N_samples)
     alphas_shifted = \
         torch.cat([torch.ones_like(alphas[:, :1]), 1 - alphas + 1e-10], -1)  # [1, a1, a2, ...]
-    transparency = torch.cumprod(alphas_shifted, -1)[:, :-1]  # T in the paper
+    # transparency = torch.cumprod(alphas_shifted, -1)[:, :-1]  # T in the paper
+    transparency = cumprod_exportable(alphas_shifted, -1)[:, :-1]
     weights = alphas * transparency # (N_rays, N_samples)
     # equals "1 - (1-a1)(1-a2)...(1-an)" mathematically
 

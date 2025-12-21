@@ -1,4 +1,6 @@
 #!/bin/env python
+import time
+
 import pytorch_lightning as pl
 import torch.profiler
 from pytorch_lightning.profilers import PyTorchProfiler
@@ -6,11 +8,43 @@ from pytorch_lightning.profilers import PyTorchProfiler
 from models.nerf_pl import NeRF_pl
 from opt import get_opts
 
+from benchmarker import CPU, Memory, jstat_start, jstat_stop
+
 # import nvidia_dlprof_pytorch_nvtx
 # nvidia_dlprof_pytorch_nvtx.init()
 
 
 pl.seed_everything(3407)
+
+
+def training(trainer, system, ckpt_path):
+    # cpu_thread = CPU()
+    # cpu_thread.start()
+    jstat_start()
+
+    start = time.perf_counter()
+    trainer.fit(system, ckpt_path=ckpt_path)
+    end = time.perf_counter() - start
+
+    # cpu_thread.stop()
+    # cpu_thread.join()
+
+    # cpu_use = round(cpu_thread.result[0], 2)
+    cpu_use, gpu, mem_use, swap, avg_vdd = jstat_stop()
+
+    print(f"{end:.6f},{cpu_use},{gpu},{mem_use},{swap},{avg_vdd}")
+
+
+def inference(trainer, system, ckpt_path):
+    jstat_start()
+
+    start = time.perf_counter()
+    trainer.validate(system, ckpt_path=ckpt_path)
+    end = time.perf_counter() - start
+
+    cpu_use, gpu, mem_use, swap, avg_vdd = jstat_stop()
+
+    print(f"{end:.6f},{cpu_use},{gpu},{mem_use},{swap},{avg_vdd}")
 
 
 def main():
@@ -47,16 +81,20 @@ def main():
         callbacks=[ckpt_callback],
         devices=args.gpu_id,
         # deterministic=True, # RuntimeError: cumsum_cuda_kernel does not have a deterministic implementation, but you set 'torch.use_deterministic_algorithms(True)'.
-        benchmark=True,
+        # benchmark=True,
         # weights_summary=None,  # pass a ModelSummary callback with max_depth instead
         num_sanity_val_steps=2,
         check_val_every_n_epoch=1,
-        precision="bf16-mixed",
-        # profiler=profiler)
-        profiler="simple",
+        # precision="bf16-mixed",
+        profiler=None,
+        enable_progress_bar=True
     )
 
-    trainer.fit(system, ckpt_path=args.ckpt_path)
+    print("training")
+    training(trainer, system, args.ckpt_path)
+
+    print("\ninfer")
+    inference(trainer, system, args.ckpt_path)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import os
 import json
 import train_utils
 from models import load_model
-from datasets import SatelliteDataset
+from datasets import load_train_dataset, load_val_dataset
 from rendering_trt import render_rays_trt
 from collections import defaultdict
 import metrics
@@ -99,7 +99,7 @@ def load_nerf(run_id, logs_dir, ckpts_dir, epoch_number):
 
     # checkpoint_path = os.path.join(ckpts_dir, "{}/epoch={}.ckpt".format(run_id, epoch_number))
     # checkpoint_path =
-    checkpoint_path = os.path.join("{}/epoch={}.ckpt".format(ckpts_dir, epoch_number))
+    checkpoint_path = os.path.join("{}/2025-11-10_20-38-45_JAX_068_ds1_sat-nerf_tmpd_4_64_16/epoch={}.ckpt".format(ckpts_dir, epoch_number))
     print(checkpoint_path)
     print("Using", checkpoint_path)
     if not os.path.exists(checkpoint_path):
@@ -375,12 +375,14 @@ def eval_aoi(run_id, logs_dir, output_dir, epoch_number, split, checkpoints_dir=
     models = load_nerf(run_id, logs_dir, checkpoints_dir, epoch_number - 1)
 
     # prepare dataset
-    dataset = SatelliteDataset(args.root_dir,
-                               args.img_dir,
-                               split="val",
-                               img_downscale=args.img_downscale,
-                               cache_dir=args.cache_dir
-                               )
+    # dataset = SatelliteDataset(args.root_dir,
+    #                            args.img_dir,
+    #                            split="val",
+    #                            img_downscale=args.img_downscale,
+    #                            cache_dir=args.cache_dir
+    #                            )
+    dataset = load_val_dataset(args)[0]
+
 
     if split == "train":
         with open(os.path.join(args.root_dir, "train.txt"), "r") as f:
@@ -390,13 +392,16 @@ def eval_aoi(run_id, logs_dir, output_dir, epoch_number, split, checkpoints_dir=
         samples_to_eval = np.arange(0, len(dataset))
     else:
         samples_to_eval = np.arange(1, len(dataset))
+        # samples_to_eval = torch.utils.data.DataLoader(dataset, batch_size=8192, shuffle=False)
 
     psnr, ssim, mae = [], [], []
 
     with TrtRunner(models["trt"]) as runner:
         print("Warmup stage")
+        # for i, batch in enumerate(samples_to_eval):
         for i in samples_to_eval:
             sample = dataset[i]
+            # sample = batch
             rays, rgbs = sample["rays"].cuda(), sample["rgbs"]
             rays = rays.squeeze()  # (H*W, 3)
             rgbs = rgbs.squeeze()  # (H*W, 3)
@@ -542,9 +547,10 @@ def eval_aoi(run_id, logs_dir, output_dir, epoch_number, split, checkpoints_dir=
 #
 
 if __name__ == "__main__":
-    run_id = "/data/exp-all/JAX_260_ds1_2gpu_batch4096_satnerf/"
-    logs_dir = "logs/2023-09-25_15-52-11_JAX_260_ds1_2gpu_batch4096_satnerf/"
-    epoch_number = 32
+    run_id = "/data/satnerf/exp/JAX_068_ds1_sat-nerf_tmpd_4_64_16/"
+    # logs_dir = "logs/2023-09-25_15-52-11_JAX_260_ds1_2gpu_batch4096_satnerf/"
+    logs_dir = "logs/2025-12-03_23-07-09_JAX_068_ds1_sat-nerf_tmpd_4_64_16"
+    epoch_number = 3
     split = "val"
     output_dir = "./exps-eval"
 
